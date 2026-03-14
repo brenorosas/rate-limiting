@@ -1,3 +1,6 @@
+x-shared-env: &shared-env
+  REDIS_URL: redis://:redispassword@rate-limiting-redis:6379
+
 services:
   redis:
     image: redis:latest
@@ -13,7 +16,8 @@ services:
       dockerfile: Dockerfile
     container_name: rate-limiting-server-instance-1
     environment:
-      - INSTANCE_ID=1
+      <<: *shared-env
+      INSTANCE_ID: 1
     depends_on:
       - redis
     restart: always
@@ -24,7 +28,8 @@ services:
       dockerfile: Dockerfile
     container_name: rate-limiting-server-instance-2
     environment:
-      - INSTANCE_ID=2
+      <<: *shared-env
+      INSTANCE_ID: 2
     depends_on:
       - redis
     restart: always
