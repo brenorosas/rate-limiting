@@ -6,3 +6,16 @@ services:
     ports:
       - "6379:6379"
     restart: always
+
+  rate-limiting-instance-1:
+    build:
+      context: ./rate-limiting
+      dockerfile: Dockerfile
+    container_name: rate-limiting-server-instance-1
+    ports:
+      - "8080:8080"
+    environment:
+      - INSTANCE_ID=1
+    depends_on:
+      - redis
+    restart: always
