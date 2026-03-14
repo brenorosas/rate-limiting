@@ -8,8 +8,7 @@ pub struct InstanceService {
 
 impl InstanceService {
     pub fn new() -> Self {
-        let instance_id =
-            std::env::var("INSTANCE_ID").unwrap_or_else(|_| "instance_id_not_set".to_string());
+        let instance_id = std::env::var("INSTANCE_ID").expect("INSTANCE_ID must be set");
 
         InstanceService { instance_id }
     }
