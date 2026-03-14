@@ -12,10 +12,31 @@ services:
       context: ./rate-limiting
       dockerfile: Dockerfile
     container_name: rate-limiting-server-instance-1
-    ports:
-      - "8080:8080"
     environment:
       - INSTANCE_ID=1
     depends_on:
       - redis
+    restart: always
+
+  rate-limiting-instance-2:
+    build:
+      context: ./rate-limiting
+      dockerfile: Dockerfile
+    container_name: rate-limiting-server-instance-2
+    environment:
+      - INSTANCE_ID=2
+    depends_on:
+      - redis
+    restart: always
+
+  nginx:
+    image: nginx:latest
+    container_name: rate-limiting-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - rate-limiting-instance-1
+      - rate-limiting-instance-2
     restart: always
