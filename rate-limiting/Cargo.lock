@@ -489,6 +489,7 @@ dependencies = [
  "axum",
  "redis",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

@@ -7,6 +7,8 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::MethodRouter;
 
+use serde::{Deserialize, Serialize};
+
 use crate::redis::RedisClient;
 
 #[derive(Clone)]
@@ -22,9 +24,23 @@ pub struct SlidingWindowArgs {
 }
 
 #[derive(Clone)]
+pub struct TokenBucketArgs {
+    pub bucket_size: u64,
+    pub refill_tokens: u64,
+    pub refill_seconds: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct TokenBucketState {
+    tokens: u64,
+    last_refill: u64,
+}
+
+#[derive(Clone)]
 pub enum RateLimitStrategy {
     FixedWindow(FixedWindowArgs),
     SlidingWindow(SlidingWindowArgs),
+    TokenBucket(TokenBucketArgs),
 }
 
 pub struct RateLimitLayer {
@@ -77,6 +93,8 @@ impl RateLimitLayer {
             .query_async(&mut conn)
             .await
             .unwrap_or(1);
+
+        println!("fixed window count: {}", count);
 
         if count == 1 {
             let _: () = redis::cmd("EXPIRE")
@@ -131,6 +149,8 @@ impl RateLimitLayer {
             .await
             .unwrap_or(0);
 
+        println!("sliding window count: {}", count);
+
         if count >= args.max_requests {
             return StatusCode::TOO_MANY_REQUESTS.into_response();
         }
@@ -155,6 +175,68 @@ impl RateLimitLayer {
         next.run(req).await
     }
 
+    async fn token_bucket_rate_limit(
+        redis: Arc<RedisClient>,
+        args: TokenBucketArgs,
+        req: Request,
+        next: Next,
+    ) -> Response {
+        let path = req.uri().path().to_string();
+        let ip = match Self::get_client_ip(&req) {
+            Some(ip) => ip,
+            None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let key = format!("rate_limit:tb:{}:{}", path, ip);
+        let mut conn = redis.get_connection().await;
+
+        let stored: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await
+            .unwrap_or(None);
+
+        let bucket = stored
+            .and_then(|s| serde_json::from_str::<TokenBucketState>(&s).ok())
+            .unwrap_or(TokenBucketState {
+                tokens: args.bucket_size,
+                last_refill: now,
+            });
+
+        let elapsed = now.saturating_sub(bucket.last_refill);
+        let refilled = elapsed * args.refill_tokens / args.refill_seconds;
+        let new_tokens = (bucket.tokens + refilled).min(args.bucket_size);
+
+        if new_tokens == 0 {
+            return StatusCode::TOO_MANY_REQUESTS.into_response();
+        }
+
+        let updated = TokenBucketState {
+            tokens: new_tokens - 1,
+            last_refill: now,
+        };
+
+        println!("token bucket count: {:?}", updated);
+
+        let ttl = (args.bucket_size * args.refill_seconds / args.refill_tokens) + 1;
+
+        let _: () = redis::cmd("SET")
+            .arg(&key)
+            .arg(serde_json::to_string(&updated).unwrap())
+            .arg("EX")
+            .arg(ttl)
+            .query_async(&mut conn)
+            .await
+            .unwrap_or(());
+
+        next.run(req).await
+    }
+
     async fn rate_limit(
         redis: Arc<RedisClient>,
         strategy: RateLimitStrategy,
@@ -167,6 +249,9 @@ impl RateLimitLayer {
             }
             RateLimitStrategy::SlidingWindow(args) => {
                 Self::sliding_window_rate_limit(redis, args, req, next).await
+            }
+            RateLimitStrategy::TokenBucket(args) => {
+                Self::token_bucket_rate_limit(redis, args, req, next).await
             }
         }
     }
