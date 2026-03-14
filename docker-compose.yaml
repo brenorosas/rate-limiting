@@ -1,0 +1,8 @@
+services:
+  redis:
+    image: redis:latest
+    container_name: rate-limiting-redis
+    command: redis-server --requirepass redispassword
+    ports:
+      - "6379:6379"
+    restart: always
